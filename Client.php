@@ -239,7 +239,7 @@ class Client
                 break;
         }
 
-        return $this->executeRequest($token_endpoint, $parameters, self::HTTP_METHOD_POST, $http_headers, self::HTTP_FORM_CONTENT_TYPE_APPLICATION);
+        return $this->executeRequest($token_endpoint, $parameters, $body, self::HTTP_METHOD_POST, $http_headers, self::HTTP_FORM_CONTENT_TYPE_APPLICATION);
     }
 
     /**
@@ -312,13 +312,12 @@ class Client
      * @param int    $form_content_type HTTP form content type to use
      * @return array
      */
-    public function fetch($protected_resource_url, $parameters = array(), $http_method = self::HTTP_METHOD_GET, array $http_headers = array(), $form_content_type = self::HTTP_FORM_CONTENT_TYPE_MULTIPART)
-    {
+    public function fetch($protected_resource_url, $token = array(),$params = array(), $http_method = self::HTTP_METHOD_GET, array $http_headers = array(), $form_content_type = self::HTTP_FORM_CONTENT_TYPE_MULTIPART ) {
         if ($this->access_token) {
             switch ($this->access_token_type) {
                 case self::ACCESS_TOKEN_URI:
-                    if (is_array($parameters)) {
-                        $parameters[$this->access_token_param_name] = $this->access_token;
+                    if (is_array($token)) {
+                        $token[$this->access_token_param_name] = $this->access_token;
                     } else {
                         throw new InvalidArgumentException(
                             'You need to give parameters as array if you want to give the token within the URI.',
@@ -333,14 +332,14 @@ class Client
                     $http_headers['Authorization'] = 'OAuth ' . $this->access_token;
                     break;
                 case self::ACCESS_TOKEN_MAC:
-                    $http_headers['Authorization'] = 'MAC ' . $this->generateMACSignature($protected_resource_url, $parameters, $http_method);
+                    $http_headers['Authorization'] = 'MAC ' . $this->generateMACSignature($protected_resource_url, $token, $http_method);
                     break;
                 default:
                     throw new Exception('Unknown access token type.', Exception::INVALID_ACCESS_TOKEN_TYPE);
                     break;
             }
         }
-        return $this->executeRequest($protected_resource_url, $parameters, $http_method, $http_headers, $form_content_type);
+        return $this->executeRequest($protected_resource_url, $token, $params, $http_method, $http_headers, $form_content_type);
     }
 
     /**
@@ -390,7 +389,7 @@ class Client
      * @param int    $form_content_type HTTP form content type to use
      * @return array
      */
-    private function executeRequest($url, $parameters = array(), $http_method = self::HTTP_METHOD_GET, array $http_headers = null, $form_content_type = self::HTTP_FORM_CONTENT_TYPE_MULTIPART)
+    private function executeRequest($url,$token = array(), $params = array(), $http_method = self::HTTP_METHOD_GET, array $http_headers = null, $form_content_type = self::HTTP_FORM_CONTENT_TYPE_MULTIPART)
     {
         $curl_options = array(
             CURLOPT_RETURNTRANSFER => true,
@@ -398,32 +397,31 @@ class Client
             CURLOPT_CUSTOMREQUEST  => $http_method
         );
 
+		// Added by Dan Elkins to allow tracking
+		// of CURL headers being sent
+		$f = fopen('curl_request_info.txt', 'a');
+		$curl_options[CURLOPT_FOLLOWLOCATION] = 1;
+		$curl_options[CURLOPT_VERBOSE]        = 1;
+		$curl_options[CURLOPT_STDERR]         = $f;
+		// END CURL header tracking
+
         switch($http_method) {
             case self::HTTP_METHOD_POST:
                 $curl_options[CURLOPT_POST] = true;
-                /* No break */
-            case self::HTTP_METHOD_PUT:
-			case self::HTTP_METHOD_PATCH:
-
-                /**
-                 * Passing an array to CURLOPT_POSTFIELDS will encode the data as multipart/form-data,
-                 * while passing a URL-encoded string will encode the data as application/x-www-form-urlencoded.
-                 * http://php.net/manual/en/function.curl-setopt.php
-                 */
-                if(is_array($parameters) && self::HTTP_FORM_CONTENT_TYPE_APPLICATION === $form_content_type) {
-                    $parameters = http_build_query($parameters, null, '&');
-                }
-                $curl_options[CURLOPT_POSTFIELDS] = $parameters;
-                break;
-            case self::HTTP_METHOD_HEAD:
-                $curl_options[CURLOPT_NOBODY] = true;
+				$curl_options[CURLOPT_POSTFIELDS] = json_encode($params);
+				// echo $curl_options[CURLOPT_POSTFIELDS];
                 /* No break */
             case self::HTTP_METHOD_DELETE:
             case self::HTTP_METHOD_GET:
-                if (is_array($parameters)) {
-                    $url .= '?' . http_build_query($parameters, null, '&');
-                } elseif ($parameters) {
-                    $url .= '?' . $parameters;
+                if (is_array($token)) {
+                    $url .= '?' . http_build_query($token, null, '&');
+                } elseif ($token) {
+                    $url .= '?' . $token;
+                }
+                if (is_array($params)) {
+                    $url .= "&" . http_build_query($params, null, '&');
+                } elseif ($token) {
+                    $url .= "&" . $params;
                 }
                 break;
             default:
@@ -464,6 +462,11 @@ class Client
             $json_decode = json_decode($result, true);
         }
         curl_close($ch);
+
+		// Added by Dan Elkins for verbose results
+		// close the log file
+		fclose($f);
+		// end added by dan Elkins
 
         return array(
             'result' => (null === $json_decode) ? $result : $json_decode,
